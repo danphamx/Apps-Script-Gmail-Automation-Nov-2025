@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <?!= include('Styles'); ?>
+    <title><?= title ?></title>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1><?= title ?></h1>
+
+      <section class="card">
+        <h2>Quick Actions</h2>
+        <button class="btn" id="run-archive">Archive Inbox (last 7 days)</button>
+        <span id="run-archive-status" class="muted"></span>
+      </section>
+
+      <section class="card">
+        <h2>Sent Mail Summary (last 7 days)</h2>
+        <div id="summary">Loading…</div>
+      </section>
+
+      <section class="card">
+        <h2>Recent Actions Log</h2>
+        <div id="log">Loading…</div>
+      </section>
+    </div>
+
+    <script>
+      const $ = s => document.querySelector(s);
+
+      function showError(el, msg) {
+        el.innerHTML = `<p style="color:#f87171;font-weight:bold;">⚠️ ${msg}</p>`;
+      }
+
+      function safeRun(fnName, successHandler, failHandler) {
+        google.script.run
+          .withSuccessHandler(successHandler)
+          .withFailureHandler(failHandler)
+          [fnName]();
+      }
+
+      // ------- Render Summary -------
+      function renderSummary(data) {
+        const el = $('#summary');
+        if (!data || data.error) {
+          return showError(el, data?.message || 'No summary data returned.');
+        }
+
+        const d = new Date(data.generatedAt || Date.now());
+        const parts = [];
+        parts.push(`<p class="muted">Generated: ${d.toLocaleString()}</p>`);
+        parts.push(`<p><strong>Total sent messages:</strong> ${data?.totals?.sentMessages || 0}</p>`);
+
+        // Defensive defaults
+        const cats = data.categories || {};
+        const byDomain = cats.byDomain || { top10: [], data: {} };
+        const byDay = cats.byDay || {};
+        const byTopic = cats.byTopic || {};
+
+        // --- By Domain ---
+        parts.push(`<h3>Top Recipient Domains</h3>`);
+        if (!byDomain.top10.length) {
+          parts.push('<p class="muted">No domain data.</p>');
+        } else {
+          parts.push('<ul class="list">');
+          byDomain.top10.forEach(row => {
+            const domain = row.domain === '_unknown' ? '(unknown)' : row.domain;
+            const domainData = byDomain.data[domain] || byDomain.data['_unknown'] || { items: [] };
+            parts.push(`<li><details><summary>${domain} — <span class="badge">${row.count}</span></summary>${renderItems(domainData)}</details></li>`);
+          });
+          parts.push('</ul>');
+        }
+
+        // --- By Day ---
+        parts.push(`<h3>By Day</h3>`);
+        const dayEntries = Object.entries(byDay);
+        if (!dayEntries.length) {
+          parts.push('<p class="muted">No daily data.</p>');
+        } else {
+          parts.push('<ul class="grid">');
+          dayEntries
+            .sort((a,b) => b[0].localeCompare(a[0]))
+            .forEach(([day, obj]) => {
+              parts.push(`<li class="grid-item"><details><summary>${day} <span class="badge">${obj.count}</span></summary>${renderItems(obj)}</details></li>`);
+            });
+          parts.push('</ul>');
+        }
+
+        // --- By Topic ---
+        parts.push(`<h3>By Topic</h3>`);
+        const topicEntries = Object.entries(byTopic);
+        if (!topicEntries.length) {
+          parts.push('<p class="muted">No topic data.</p>');
+        } else {
+          parts.push('<ul class="list">');
+          topicEntries
+            .sort((a,b) => b[1].count - a[1].count)
+            .forEach(([topic, obj]) => {
+              parts.push(`<li><details><summary>${topic} — <span class="badge">${obj.count}</span></summary>${renderItems(obj)}</details></li>`);
+            });
+          parts.push('</ul>');
+        }
+
+        el.innerHTML = parts.join('');
+      }
+
+      function renderItems(obj) {
+        if (!obj || !obj.items || !obj.items.length) return '<p class="muted">No items.</p>';
+        const lines = [];
+        lines.push('<ol class="subjects">');
+        obj.items.sort((a,b) => b.iso.localeCompare(a.iso)).forEach(it => {
+          const ts = new Date(it.iso).toLocaleString();
+          const recips = (it.recipients || []).map(r => `<code>${r}</code>`).join(', ');
+          lines.push(`<li>
+            <details>
+              <summary><strong>${escapeHtml(it.subject)}</strong> <span class="muted">— ${ts}</span></summary>
+              <div class="meta"><span>To/CC/BCC:</span> ${recips || '<em class="muted">(none)</em>'}</div>
+              <div class="meta"><span>Snippet:</span> <pre>${escapeHtml(it.snippet || '')}</pre></div>
+              <div class="meta">
+                <a class="btn-link" target="_blank" href="https://mail.google.com/mail/u/0/#all/${it.threadId}">Open in Gmail</a>
+              </div>
+            </details>
+          </li>`);
+        });
+        lines.push('</ol>');
+        return lines.join('');
+      }
+
+      // ------- Render Log -------
+      function renderLog(rows) {
+        const el = $('#log');
+        if (!rows || !rows.length) {
+          el.innerHTML = '<p class="muted">No recent log entries.</p>';
+          return;
+        }
+        const parts = ['<table class="tbl"><thead><tr><th>Date Time</th><th>Action</th><th>Subject</th><th>Reason</th></tr></thead><tbody>'];
+        rows.forEach(r => {
+          parts.push(`<tr>
+            <td>${escapeHtml(r.dateTime)}</td>
+            <td>${escapeHtml(r.action)}</td>
+            <td>${escapeHtml(r.subject)}</td>
+            <td>${escapeHtml(r.reason)}</td>
+          </tr>`);
+        });
+        parts.push('</tbody></table>');
+        el.innerHTML = parts.join('');
+      }
+
+      function escapeHtml(s) {
+        return (s || '').replace(/[&<>"']/g, c => ({
+          '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }[c]));
+      }
+
+      // --- Run button ---
+      $('#run-archive').addEventListener('click', () => {
+        $('#run-archive-status').textContent = 'Running…';
+        google.script.run
+          .withSuccessHandler(() => { 
+            $('#run-archive-status').textContent = 'Done.'; 
+            google.script.run.withSuccessHandler(renderLog).getActionLog(200);
+          })
+          .withFailureHandler(err => {
+            showError($('#run-archive-status'), 'Archive failed: ' + (err?.message || err));
+          })
+          .autoArchiveLast7Days();
+      });
+
+      // --- Load summary and log safely ---
+      safeRun('getSentSummary',
+        data => renderSummary(data),
+        err => showError($('#summary'), 'Error: ' + err.message)
+      );
+
+      safeRun('getActionLog',
+        renderLog,
+        err => showError($('#log'), 'Error: ' + err.message)
+      );
+
+      // --- Timeout fallback ---
+      setTimeout(() => {
+        if ($('#summary').textContent.includes('Loading'))
+          showError($('#summary'), 'Timed out while fetching data (try refreshing)');
+      }, 7000);
+    </script>
+  </body>
+</html>
