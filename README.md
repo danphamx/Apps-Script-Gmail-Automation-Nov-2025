@@ -2,6 +2,7 @@
 Featured on Medium
 
 # 🧠 Gmail Assistant — Google Apps Script + ChatGPT
+<img width="922" height="485" alt="Logo No Text Create an automated Gmail Assistant in 50 minutes with ChatGPT" src="https://github.com/user-attachments/assets/54e6653c-b771-4b41-90a0-ed9f550aac49" />
 
 **Automate your Gmail cleanup and reclaim focus using a simple, no-cost automation built with Google Apps Script and ChatGPT.**  
 This project shows you how to create a personal Gmail assistant that automatically marks certain emails as read, archives them, and logs actions to Google Sheets — all without API keys, subscriptions, or third-party services.
